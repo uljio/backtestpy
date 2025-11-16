@@ -1,0 +1,74 @@
+//@version=5
+strategy("T07 Opportunistic Maker", shorttitle="T07_OM", overlay=true,
+         initial_capital=1000000, default_qty_type=strategy.cash,
+         commission_type=strategy.commission.percent, commission_value=0.2)
+
+// 🌙 Parameters
+vol_mult = input.float(1.5, "Volume Multiplier", minval=0.1, step=0.1)
+atr_period = input.int(14, "ATR Period", minval=1)
+atr_threshold = input.float(0.005, "ATR Threshold %", minval=0.001, step=0.001)
+spread_mult = input.float(1.1, "Spread Multiplier", minval=0.1, step=0.1)
+limit_offset_mult = input.float(0.5, "Limit Offset ATR Mult", minval=0.1, step=0.1)
+sl_mult = input.float(1.0, "Stop Loss ATR Mult", minval=0.1, step=0.1)
+tp_mult = input.float(2.0, "Take Profit ATR Mult", minval=0.5, step=0.5)
+risk_pct = input.float(0.005, "Risk Per Side %", minval=0.001, step=0.001)
+vol_sma_period = input.int(20, "Volume SMA Period", minval=1)
+spread_sma_period = input.int(20, "Spread SMA Period", minval=1)
+adx_period = input.int(14, "ADX Period", minval=1)
+adx_threshold = input.float(25, "ADX Threshold", minval=1, maxval=50)
+min_bars = input.int(50, "Min Bars", minval=1)
+
+// 🌙 Indicators
+atr = ta.atr(atr_period)
+adx = ta.adx(adx_period)
+vol_sma = ta.sma(volume, vol_sma_period)
+
+// Spread proxy
+spread_proxy = (high - low) / close
+avg_spread = ta.sma(spread_proxy, spread_sma_period)
+
+// 🌙 Entry Conditions
+vol_spike = volume > vol_mult * vol_sma
+low_vol = (atr / close) < atr_threshold
+widening_spread = spread_proxy > spread_mult * avg_spread
+ranging_market = adx < adx_threshold
+
+// 🌙 Entry Logic (Market Making - Long and Short)
+if bar_index >= min_bars and vol_spike and low_vol and widening_spread and ranging_market and strategy.opentrades < 5
+
+    // Position sizing based on risk
+    sl_dist = sl_mult * atr
+    risk_amount = strategy.equity * risk_pct
+    size_per_side = risk_amount / sl_dist
+
+    if size_per_side > 0
+        // Dynamic limit prices
+        limit_offset = limit_offset_mult * atr
+        bid_price = close - limit_offset
+        ask_price = close + limit_offset
+
+        // Dynamic SL and TP
+        tp_dist = tp_mult * atr
+
+        // Place bid (long limit order)
+        buy_sl = bid_price - sl_dist
+        buy_tp = bid_price + tp_dist
+        strategy.entry("Bid", strategy.long, qty=size_per_side, limit=bid_price)
+        strategy.exit("Exit Bid", "Bid", stop=buy_sl, limit=buy_tp)
+
+        // Place ask (short limit order)
+        sell_sl = ask_price + sl_dist
+        sell_tp = ask_price - tp_dist
+        strategy.entry("Ask", strategy.short, qty=size_per_side, limit=ask_price)
+        strategy.exit("Exit Ask", "Ask", stop=sell_sl, limit=sell_tp)
+
+        label.new(bar_index, high, "🌙 Maker\nBid:" + str.tostring(bid_price, "#.##") +
+                  "\nAsk:" + str.tostring(ask_price, "#.##"),
+                  style=label.style_label_down, color=color.purple, textcolor=color.white)
+
+// 🌙 Plot indicators
+plot(atr, "ATR", color=color.orange)
+hline(atr_threshold * close, "ATR Threshold", color=color.red, linestyle=hline.style_dashed)
+
+// 🌙 Moon Dev's Opportunistic Maker Strategy
+// Market making strategy - places limit orders on both sides during liquidity events

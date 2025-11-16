@@ -1,0 +1,110 @@
+//@version=5
+strategy("T16 Holistic Decomposition", shorttitle="T16_HD", overlay=true,
+         initial_capital=1000000, default_qty_type=strategy.cash,
+         commission_type=strategy.commission.percent, commission_value=0.2)
+
+// 🌙 Parameters
+ema_short_period = input.int(50, "EMA Short Period", minval=1)
+ema_long_period = input.int(200, "EMA Long Period", minval=1)
+rsi_period = input.int(14, "RSI Period", minval=1)
+vol_period = input.int(20, "Volume Period", minval=1)
+atr_period = input.int(14, "ATR Period", minval=1)
+risk_per_trade = input.float(0.01, "Risk Per Trade %", minval=0.001, step=0.001)
+sl_mult = input.float(1.5, "Stop Loss ATR Mult", minval=0.5, step=0.1)
+rr_ratio = input.float(3.0, "Risk:Reward Ratio", minval=1.0, step=0.5)
+rsi_long_threshold = input.int(55, "RSI Long Threshold", minval=1, maxval=100)
+rsi_short_threshold = input.int(45, "RSI Short Threshold", minval=1, maxval=100)
+vol_multiplier = input.float(1.5, "Volume Multiplier", minval=0.1, step=0.1)
+
+// 🌙 Indicators
+// Trend dimension
+ema_short = ta.ema(close, ema_short_period)
+ema_long = ta.ema(close, ema_long_period)
+
+// Momentum dimension
+rsi = ta.rsi(close, rsi_period)
+
+// Volume participation dimension
+avg_vol = ta.sma(volume, vol_period)
+
+// Volatility dimension
+atr = ta.atr(atr_period)
+
+// State variables
+var float entry_atr = na
+
+// Plot indicators
+plot(ema_short, "EMA 50", color=color.blue, linewidth=2)
+plot(ema_long, "EMA 200", color=color.orange, linewidth=2)
+
+// 🌙 Entry Logic (Multi-dimensional alignment)
+if strategy.position_size == 0
+    // Position sizing
+    stop_distance = sl_mult * atr
+    risk_amount = strategy.equity * risk_per_trade
+    position_size = risk_amount / stop_distance
+
+    if position_size > 0
+        // Long: Uptrend alignment
+        if close > ema_short and ema_short > ema_long and rsi > rsi_long_threshold and volume > vol_multiplier * avg_vol
+            strategy.entry("Long", strategy.long, qty=position_size)
+            entry_atr := atr
+            label.new(bar_index, low, "🚀 LONG\nRSI:" + str.tostring(rsi, "#") +
+                      "\nATR:" + str.tostring(atr, "#.##"),
+                      style=label.style_label_up, color=color.green, textcolor=color.white)
+
+        // Short: Downtrend alignment
+        else if close < ema_short and ema_short < ema_long and rsi < rsi_short_threshold and volume > vol_multiplier * avg_vol
+            strategy.entry("Short", strategy.short, qty=position_size)
+            entry_atr := atr
+            label.new(bar_index, high, "🔻 SHORT\nRSI:" + str.tostring(rsi, "#") +
+                      "\nATR:" + str.tostring(atr, "#.##"),
+                      style=label.style_label_down, color=color.red, textcolor=color.white)
+
+// 🌙 Exit Logic (Fixed TP/SL based on entry ATR)
+if strategy.position_size != 0
+    // Use entry ATR for consistent risk management
+    current_entry_atr = na(entry_atr) ? atr : entry_atr
+    sl_dist = sl_mult * current_entry_atr
+    tp_dist = rr_ratio * sl_dist
+
+    // Get entry price from last trade
+    entry_price = strategy.opentrades.entry_price(strategy.opentrades - 1)
+
+    // Long position exits
+    if strategy.position_size > 0
+        sl_price = entry_price - sl_dist
+        tp_price = entry_price + tp_dist
+
+        if close <= sl_price
+            strategy.close("Long", comment="Stop Loss 🛑")
+            label.new(bar_index, high, "🛑 SL",
+                      style=label.style_label_down, color=color.red, textcolor=color.white)
+            entry_atr := na
+
+        else if close >= tp_price
+            strategy.close("Long", comment="Take Profit 🎯")
+            label.new(bar_index, high, "🎯 TP 3:1",
+                      style=label.style_label_down, color=color.blue, textcolor=color.white)
+            entry_atr := na
+
+    // Short position exits
+    else if strategy.position_size < 0
+        sl_price = entry_price + sl_dist
+        tp_price = entry_price - tp_dist
+
+        if close >= sl_price
+            strategy.close("Short", comment="Stop Loss 🛑")
+            label.new(bar_index, low, "🛑 SL",
+                      style=label.style_label_up, color=color.red, textcolor=color.white)
+            entry_atr := na
+
+        else if close <= tp_price
+            strategy.close("Short", comment="Take Profit 🎯")
+            label.new(bar_index, low, "🎯 TP 3:1",
+                      style=label.style_label_up, color=color.blue, textcolor=color.white)
+            entry_atr := na
+
+// 🌙 Moon Dev's Holistic Decomposition Strategy
+// Multi-dimensional trend/momentum strategy with EMA, RSI, Volume, ATR
+// Optimized for BTC and volatile assets with 3:1 RR

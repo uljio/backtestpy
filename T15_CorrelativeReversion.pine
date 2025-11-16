@@ -1,0 +1,84 @@
+//@version=5
+strategy("T15 Correlative Reversion", shorttitle="T15_CR", overlay=true,
+         initial_capital=1000000, default_qty_type=strategy.cash,
+         commission_type=strategy.commission.percent, commission_value=0.2)
+
+// 🌙 Parameters
+lookback = input.int(60, "Z-Score Lookback", minval=10)
+entry_z = input.float(2.0, "Entry Z-Score", minval=0.5, step=0.1)
+exit_z = input.float(0.5, "Exit Z-Score", minval=0.1, step=0.1)
+stop_z = input.float(3.0, "Stop Loss Z-Score", minval=1.0, step=0.1)
+risk_per_trade = input.float(0.01, "Risk Per Trade %", minval=0.001, step=0.001)
+stop_pct = input.float(0.02, "Stop Loss %", minval=0.01, step=0.01)
+
+// 🌙 Indicators
+sma = ta.sma(close, lookback)
+stdev = ta.stdev(close, lookback)
+
+// Calculate Z-Score
+z_score = (close - sma) / stdev
+
+// Plot Z-Score on separate panel (optional)
+plot(z_score, "Z-Score", color=color.blue, linewidth=2)
+hline(0, "Zero", color=color.gray, linestyle=hline.style_solid)
+hline(entry_z, "Entry Long", color=color.green, linestyle=hline.style_dashed)
+hline(-entry_z, "Entry Short", color=color.red, linestyle=hline.style_dashed)
+hline(exit_z, "Exit", color=color.orange, linestyle=hline.style_dotted)
+hline(-exit_z, "Exit", color=color.orange, linestyle=hline.style_dotted)
+
+// Plot bands on price chart
+plot(sma, "Mean", color=color.yellow, linewidth=2)
+plot(sma + entry_z * stdev, "Upper Entry", color=color.red, linewidth=1)
+plot(sma - entry_z * stdev, "Lower Entry", color=color.green, linewidth=1)
+
+// 🌙 Entry Logic (Long and Short based on Z-Score extremes)
+if bar_index >= lookback and strategy.position_size == 0
+    // Risk-based position sizing
+    risk_amount = strategy.equity * risk_per_trade
+    risk_distance = close * stop_pct
+    position_size = risk_amount / risk_distance
+
+    if position_size > 0
+        // Oversold: Long
+        if z_score < -entry_z
+            strategy.entry("Long", strategy.long, qty=position_size)
+            label.new(bar_index, low, "🟢 LONG\nZ=" + str.tostring(z_score, "#.##"),
+                      style=label.style_label_up, color=color.green, textcolor=color.white)
+
+        // Overbought: Short
+        else if z_score > entry_z
+            strategy.entry("Short", strategy.short, qty=position_size)
+            label.new(bar_index, high, "🔴 SHORT\nZ=" + str.tostring(z_score, "#.##"),
+                      style=label.style_label_down, color=color.red, textcolor=color.white)
+
+// 🌙 Exit Logic
+// Long exits
+if strategy.position_size > 0
+    // Stop loss - extreme oversold
+    if z_score < -stop_z
+        strategy.close("Long", comment="Stop Loss 🚨")
+        label.new(bar_index, high, "🚨 SL",
+                  style=label.style_label_down, color=color.red, textcolor=color.white)
+
+    // Mean reversion exit
+    else if math.abs(z_score) < exit_z
+        strategy.close("Long", comment="Reversion ✅")
+        label.new(bar_index, high, "✅ Exit",
+                  style=label.style_label_down, color=color.blue, textcolor=color.white)
+
+// Short exits
+if strategy.position_size < 0
+    // Stop loss - extreme overbought
+    if z_score > stop_z
+        strategy.close("Short", comment="Stop Loss 🚨")
+        label.new(bar_index, low, "🚨 SL",
+                  style=label.style_label_up, color=color.red, textcolor=color.white)
+
+    // Mean reversion exit
+    else if math.abs(z_score) < exit_z
+        strategy.close("Short", comment="Reversion ✅")
+        label.new(bar_index, low, "✅ Exit",
+                  style=label.style_label_up, color=color.blue, textcolor=color.white)
+
+// 🌙 Moon Dev's Correlative Reversion Strategy
+// Statistical mean reversion using Z-Score analysis

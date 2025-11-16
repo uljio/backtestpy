@@ -1,0 +1,110 @@
+//@version=5
+strategy("T06 Confluent Oversold", shorttitle="T06_CO", overlay=true,
+         initial_capital=1000000, default_qty_type=strategy.cash,
+         commission_type=strategy.commission.percent, commission_value=0.2)
+
+// 🌙 Parameters
+stoch_oversold = input.int(20, "Stochastic Oversold", minval=1, maxval=50)
+cci_oversold = input.int(-100, "CCI Oversold", maxval=-50)
+profit_target = input.float(0.05, "Profit Target %", minval=0.01, step=0.01)
+stop_loss_pct = input.float(0.04, "Stop Loss %", minval=0.01, step=0.01)
+risk_per_trade = input.float(0.01, "Risk Per Trade %", minval=0.001, step=0.001)
+vol_period = input.int(5, "Volume Period", minval=1)
+trail_be = input.float(0.02, "Trail to BE at %", minval=0.01, step=0.01)
+
+// 🌙 Indicators
+// Stochastic
+[stoch_k, stoch_d] = ta.stoch(close, high, low, 14)
+slowk = ta.sma(stoch_k, 3)
+slowd = ta.sma(stoch_d, 3)
+
+// CCI
+cci = ta.cci(close, 20)
+
+// Volume
+vol_sma = ta.sma(volume, vol_period)
+
+// OBV
+obv = ta.cum(math.sign(ta.change(close)) * volume)
+
+// State variables
+var float entry_price = na
+var float stop_loss = na
+var float take_profit = na
+var float previous_low_price = 999999.0
+var float previous_low_obv = -999999.0
+var float current_low_price = 999999.0
+var float current_low_obv = -999999.0
+
+// 🌙 Track lows when not in position
+if strategy.position_size == 0
+    if low < previous_low_price
+        previous_low_price := low
+        previous_low_obv := obv
+else
+    // Update current low post-entry
+    if low < current_low_price
+        current_low_price := low
+        current_low_obv := obv
+
+// 🌙 Entry Logic (Long Only)
+stoch_oversold_cond = slowk < stoch_oversold
+stoch_d_declining = slowd < slowd[1]
+cci_oversold_cond = cci < cci_oversold
+vol_declining = volume < vol_sma
+
+if stoch_oversold_cond and stoch_d_declining and cci_oversold_cond and vol_declining and strategy.position_size == 0
+    // Risk-based position sizing
+    risk_amount = strategy.equity * risk_per_trade
+    stop_distance = close * stop_loss_pct
+    position_size = risk_amount / stop_distance
+
+    if position_size > 0
+        strategy.entry("Long", strategy.long, qty=position_size)
+        entry_price := close
+        stop_loss := entry_price * (1 - stop_loss_pct)
+        take_profit := entry_price * (1 + profit_target)
+        previous_low_price := low
+        previous_low_obv := obv
+        current_low_price := low
+        current_low_obv := obv
+        label.new(bar_index, low, "🌙 LONG\n" + str.tostring(close, "#.##"),
+                  style=label.style_label_up, color=color.green, textcolor=color.white)
+
+// 🌙 Exit Logic
+if strategy.position_size > 0
+    // Trail stop to breakeven if +2%
+    if close > entry_price * (1 + trail_be) and stop_loss < entry_price
+        stop_loss := entry_price
+
+    // Take Profit
+    if close >= take_profit
+        strategy.close("Long", comment="Take Profit 💰")
+        label.new(bar_index, high, "💰 TP",
+                  style=label.style_label_down, color=color.blue, textcolor=color.white)
+        entry_price := na
+        stop_loss := na
+        take_profit := na
+
+    // Stop Loss
+    else if close <= stop_loss
+        strategy.close("Long", comment="Stop Loss 🛑")
+        label.new(bar_index, high, "🛑 SL",
+                  style=label.style_label_down, color=color.red, textcolor=color.white)
+        entry_price := na
+        stop_loss := na
+        take_profit := na
+
+    // Bullish OBV Divergence
+    else if current_low_price < previous_low_price and current_low_obv > previous_low_obv
+        strategy.close("Long", comment="OBV Divergence 📈")
+        label.new(bar_index, high, "📈 DIV",
+                  style=label.style_label_down, color=color.purple, textcolor=color.white)
+        entry_price := na
+        stop_loss := na
+        take_profit := na
+
+// 🌙 Plot indicators
+hline(stoch_oversold, "Stoch Oversold", color=color.red, linestyle=hline.style_dashed)
+plot(slowk, "Stoch K", color=color.blue)
+plot(slowd, "Stoch D", color=color.orange)

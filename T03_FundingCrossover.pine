@@ -1,0 +1,72 @@
+//@version=5
+strategy("T03 Funding Crossover", shorttitle="T03_FC", overlay=true,
+         initial_capital=1000000, default_qty_type=strategy.cash,
+         commission_type=strategy.commission.percent, commission_value=0.2)
+
+// 🌙 Parameters
+ema_period = input.int(20, "EMA Period", minval=1)
+volume_mult = input.float(1.5, "Volume Multiplier", minval=0.1, step=0.1)
+risk_per_trade = input.float(0.01, "Risk Per Trade %", minval=0.001, maxval=0.1, step=0.001)
+trail_percent = input.float(0.02, "Trailing Stop %", minval=0.001, maxval=0.1, step=0.001)
+tp_percent = input.float(0.04, "Take Profit %", minval=0.01, maxval=0.2, step=0.01)
+max_hold_bars = input.int(8, "Max Hold Hours", minval=1)
+
+// 🌙 Indicators
+ema = ta.ema(close, ema_period)
+avg_vol = ta.sma(volume, ema_period)
+
+// 🌙 Plot indicators
+plot(ema, "EMA", color=color.yellow, linewidth=2)
+
+// 🌙 Entry Conditions (Long Only)
+var float entry_price = na
+var float max_high = na
+var int entry_bar = na
+
+// Price crosses above EMA
+price_cross = ta.crossover(close, ema)
+vol_condition = volume > avg_vol * volume_mult
+
+// 🌙 Entry Logic
+if price_cross and vol_condition and strategy.position_size == 0
+    // Position sizing based on risk
+    stop_distance = close * trail_percent
+    risk_amount = strategy.equity * risk_per_trade
+    pos_size = risk_amount / stop_distance
+
+    if pos_size > 0
+        strategy.entry("Long", strategy.long, qty=pos_size)
+        entry_price := close
+        max_high := close
+        entry_bar := bar_index
+        label.new(bar_index, low, "🌙 LONG\n" + str.tostring(close, "#.##"),
+                  style=label.style_label_up, color=color.green, textcolor=color.white)
+
+// 🌙 Exit Logic (Trailing Stop, Take Profit, Emergency, Time-based)
+if strategy.position_size > 0
+    // Update max high for trailing stop
+    max_high := math.max(nz(max_high), high)
+    trail_stop = max_high * (1 - trail_percent)
+    tp_price = entry_price * (1 + tp_percent)
+
+    // Trailing Stop
+    if low <= trail_stop
+        strategy.close("Long", comment="Trail Stop 🛑")
+        label.new(bar_index, high, "🛑 Trail",
+                  style=label.style_label_down, color=color.red, textcolor=color.white)
+
+    // Take Profit
+    else if close >= tp_price
+        strategy.close("Long", comment="Take Profit 💰")
+        label.new(bar_index, high, "💰 TP",
+                  style=label.style_label_down, color=color.blue, textcolor=color.white)
+
+    // Time-based exit (max hold period)
+    else if bar_index - entry_bar >= max_hold_bars
+        strategy.close("Long", comment="Time Exit ⏰")
+        label.new(bar_index, high, "⏰ Time",
+                  style=label.style_label_down, color=color.orange, textcolor=color.white)
+
+// 🌙 Moon Dev's Funding Crossover Strategy
+// Note: Funding rate data not available in standard TradingView, removed funding condition
+// To use funding rates, connect to Binance data feed or use external data source
